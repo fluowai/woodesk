@@ -15,12 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Buildings, MapPin } from "@phosphor-icons/react";
 
-/**
- * Cidade, não identificador de fuso. A lista mostrava "America/Bahia" e
- * "America/Fortaleza" e esperava que a pessoa soubesse em qual delas mora — o
- * identificador é do sistema, o que ela reconhece é a cidade.
- */
 const FUSOS: { id: string; cidade: string }[] = [
   { id: "America/Sao_Paulo", cidade: "São Paulo, Rio, Brasília, Sul e Sudeste" },
   { id: "America/Recife", cidade: "Recife, Salvador, Fortaleza e Nordeste" },
@@ -46,7 +42,7 @@ export function WelcomeForm({ defaultOrgName }: { defaultOrgName: string }) {
 
   return (
     <form
-      className="space-y-5 rounded-lg border bg-background p-6"
+      className="space-y-6 mt-6"
       action={(formData) => {
         if (!accepted) {
           toast.error(t("Aceite os termos para continuar."));
@@ -60,90 +56,108 @@ export function WelcomeForm({ defaultOrgName }: { defaultOrgName: string }) {
         });
       }}
     >
-      <div className="space-y-2">
-        <Label htmlFor="display_name">{t("Como se chama o seu negócio?")}</Label>
-        <Input
-          id="display_name"
-          name="display_name"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          minLength={2}
-          maxLength={120}
-          required
-        />
-        <p className="text-xs text-muted-foreground">
-          {t("É o nome que aparece para o seu time e nos relatórios. Pode ser clínica, loja, escritório — o que for seu.")}
+      <div className="space-y-2.5">
+        <Label htmlFor="display_name" className="text-sm font-bold text-slate-900">{t("Nome do seu negócio")}</Label>
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-slate-400">
+            <Buildings className="w-5 h-5" />
+          </div>
+          <Input
+            id="display_name"
+            name="display_name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            minLength={2}
+            maxLength={120}
+            required
+            className="pl-11 h-12 rounded-xl border-slate-200 text-slate-900 bg-white"
+            placeholder={t("Woodesk Chat")}
+          />
+        </div>
+        <p className="text-xs text-slate-400">
+          {t("É o nome que aparecerá para sua equipe e nos relatórios.")}
         </p>
       </div>
 
-      {/*
-        A pergunta que faltava no produto inteiro. Sem ela, o funcionário nasce
-        se apresentando como atendente de uma "loja online" — era o que os três
-        modelos de prompt diziam — e o quadro de clientes nasce com as colunas
-        de e-commerce que o gatilho semeia. Os dois defeitos têm a mesma origem:
-        uma instalação que nunca pergunta em que ramo entrou.
-      */}
-      <div className="space-y-2">
-        <Label htmlFor="o_que_faz">{t("O que vocês fazem?")}</Label>
+      <div className="space-y-2.5">
+        <Label htmlFor="o_que_faz" className="text-sm font-bold text-slate-900">{t("O que vocês fazem?")}</Label>
         <Input
           id="o_que_faz"
           name="o_que_faz"
           value={oQueFaz}
           onChange={(e) => setOQueFaz(e.target.value)}
           maxLength={280}
-          placeholder={t("Ex.: clínica odontológica, ou venda de roupa fitness pelo WhatsApp")}
+          className="h-12 rounded-xl border-slate-200 text-slate-900 bg-white"
+          placeholder={t("Ex.: clínica odontológica, venda de roupas, serviços de TI...")}
         />
-        <p className="text-xs text-muted-foreground">
-          {t(
-            "Uma linha basta. É com isso que seu funcionário aprende com quem ele está falando — e que a gente monta o quadro de clientes do seu jeito.",
-          )}
+        <p className="text-xs text-slate-400">
+          {t("Uma breve descrição ajuda a configurar os módulos e sugestões mais relevantes para o seu segmento.")}
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="timezone">{t("Onde você atende")}</Label>
-        <Select value={timezone} onValueChange={setTimezone}>
-          <SelectTrigger id="timezone">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {FUSOS.map((f) => (
-              <SelectItem key={f.id} value={f.id}>
-                {t(f.cidade)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="space-y-2.5">
+        <Label htmlFor="timezone" className="text-sm font-bold text-slate-900">{t("Onde você atende?")}</Label>
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-slate-400 z-10">
+            <MapPin className="w-5 h-5" />
+          </div>
+          <Select value={timezone} onValueChange={setTimezone}>
+            <SelectTrigger id="timezone" className="pl-11 h-12 rounded-xl border-slate-200 text-slate-900 bg-white w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FUSOS.map((f) => (
+                <SelectItem key={f.id} value={f.id}>
+                  {t(f.cidade)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <input type="hidden" name="timezone" value={timezone} />
-        <p className="text-xs text-muted-foreground">
-          {t("Decide o horário em que seu funcionário pode falar com clientes.")}
+        <p className="text-xs text-slate-400">
+          {t("Selecione a região principal em que seu negócio atua.")}
         </p>
       </div>
 
-      <label className="flex items-start gap-2 text-sm">
+      <label className="flex items-start gap-2 text-xs text-slate-400 pt-2 cursor-pointer opacity-80 hover:opacity-100 transition-opacity">
         <input
           type="checkbox"
           checked={accepted}
           onChange={(e) => setAccepted(e.target.checked)}
-          className="mt-1"
+          className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
           required
         />
         <span>
           {t("Li e aceito os")}{" "}
-          <a className="underline" href="/legal/terms" target="_blank" rel="noreferrer">
+          <a className="underline hover:text-slate-600" href="/legal/terms" target="_blank" rel="noreferrer">
             {t("Termos de Uso")}
           </a>{" "}
           {t("e a")}{" "}
-          <a className="underline" href="/legal/privacy" target="_blank" rel="noreferrer">
+          <a className="underline hover:text-slate-600" href="/legal/privacy" target="_blank" rel="noreferrer">
             {t("Política de Privacidade")}
           </a>
           .
         </span>
       </label>
 
-      <div className="flex sm:justify-end">
-        <Button type="submit" disabled={pending || !accepted} className="w-full sm:w-auto">
-          {pending ? t("Salvando...") : t("Continuar")}
+      <div className="mt-8 flex items-center justify-end gap-6 pt-4">
+        <div className="text-sm text-slate-400">
+          {t("Passo 1 de 6")}
+        </div>
+        <Button 
+          type="submit" 
+          disabled={pending || !accepted} 
+          className="h-12 px-8 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow-sm transition-all"
+        >
+          {pending ? t("Salvando...") : (
+            <>
+              {t("Continuar")}
+              <svg className="ml-2 w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </>
+          )}
         </Button>
       </div>
     </form>

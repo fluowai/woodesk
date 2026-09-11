@@ -29,6 +29,26 @@ export async function proxy(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const isAdminSurface = host.startsWith("admin.") || pathname.startsWith("/admin");
 
+  // ==== LICENSE CHECK (SaaS) ====
+  const isMegaAdminPath = pathname.startsWith("/mega-admin");
+  const licenseKey = env.DESKCOMM_LICENSE_KEY || "";
+  const { verifyLicense } = await import("@/lib/auth/license");
+  const licenseStatus = await verifyLicense(licenseKey);
+  
+  if (!licenseStatus.valid && !isMegaAdminPath) {
+    if (pathname.startsWith("/api/")) {
+      return new NextResponse(
+        JSON.stringify({ error: { code: "license_revoked", message: "License suspended or invalid." } }),
+        { status: 503, headers: { "content-type": "application/json" } }
+      );
+    }
+    return new NextResponse(
+      "<html><body style='font-family:sans-serif;text-align:center;padding:50px;background:#f8fafc;color:#0f172a;'><h1>Licença Suspensa</h1><p>A sua instância encontra-se bloqueada por pendências de licenciamento.</p><p>Entre em contato com o administrador do sistema para regularização.</p></body></html>",
+      { status: 503, headers: { "content-type": "text/html; charset=utf-8" } }
+    );
+  }
+  // =======================
+
   if (isPublicPath(pathname)) {
     return response;
   }

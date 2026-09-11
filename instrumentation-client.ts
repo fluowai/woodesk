@@ -13,6 +13,7 @@ const community = isCommunityDsn(sentryDsn);
 
 Sentry.init({
   dsn: sentryDsn,
+  spotlight: false,
 
   // FORMA DE FUNÇÃO, não de array: array SOMA aos defaults do SDK, e era assim
   // que a `BrowserSession` (default) seguia ligada apesar da política abaixo. A

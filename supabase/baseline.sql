@@ -23348,3 +23348,103 @@ grant execute on function public.fn_decrypt_oauth(bytea) to service_role;
 grant execute on function public.fn_encrypt_oauth(text) to service_role;
 grant execute on function public.fn_lgpd_cascade_redact_contact(uuid, uuid, uuid) to service_role;
 grant execute on function public.fn_update_budget_consumption() to service_role;
+
+-- Appended by migration 20260911000000_add_saas_plans.sql
+-- Migration: 20260911000000_add_saas_plans.sql
+-- Description: Adiciona tabelas de Planos e Limites para o modelo SaaS (Revendas limitando clientes)
+
+CREATE TABLE public.plans (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    name text NOT NULL,
+    max_users integer NOT NULL DEFAULT 1,
+    max_waha_connections integer NOT NULL DEFAULT 1,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.plans ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "platform_admin_all_plans" ON public.plans
+    FOR ALL
+    USING (public.fn_is_platform_admin())
+    WITH CHECK (public.fn_is_platform_admin());
+
+CREATE POLICY "users_read_plans" ON public.plans
+    FOR SELECT
+    USING (true);
+
+-- Associa uma organização a um plano
+ALTER TABLE public.organizations 
+ADD COLUMN plan_id uuid REFERENCES public.plans(id);
+
+-- Cria view ou helper para verificar limite de usuários (exemplo)
+CREATE OR REPLACE FUNCTION public.fn_check_plan_limits()
+RETURNS trigger AS $$
+DECLARE
+    v_plan_max_users integer;
+    v_current_users integer;
+BEGIN
+    -- Busca limite
+    SELECT p.max_users INTO v_plan_max_users
+    FROM public.organizations o
+    JOIN public.plans p ON p.id = o.plan_id
+    WHERE o.id = NEW.organization_id;
+
+    IF v_plan_max_users IS NULL THEN
+        RETURN NEW; -- Sem plano = sem limite restrito nesta fase
+    END IF;
+
+    -- Conta usuários atuais
+    SELECT count(*) INTO v_current_users
+    FROM public.user_organizations
+    WHERE organization_id = NEW.organization_id;
+
+    IF v_current_users >= v_plan_max_users THEN
+        RAISE EXCEPTION 'Limite de usuários excedido para o plano atual.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER tr_check_plan_limits
+    BEFORE INSERT ON public.user_organizations
+    FOR EACH ROW
+    EXECUTE FUNCTION public.fn_check_plan_limits();
+
+-- Appended by migration 20260911000001_add_waha_instances.sql
+-- Migration: 20260911000001_add_waha_instances.sql
+-- Description: Adiciona cluster de WAHA (instâncias) para balanceamento de carga
+
+CREATE TABLE public.waha_instances (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    organization_id uuid REFERENCES public.organizations(id), -- NULL se for pool público da revenda
+    name text NOT NULL,
+    api_url text NOT NULL,
+    api_key_encrypted text, -- Opcional, para armazenar a chave daquela instância específica
+    active_sessions integer NOT NULL DEFAULT 0,
+    max_sessions integer NOT NULL DEFAULT 100,
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'offline', 'maintenance')),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.waha_instances ENABLE ROW LEVEL SECURITY;
+
+-- As instâncias "públicas" (organization_id NULL) são visíveis para todos
+-- As dedicadas são visíveis apenas para a org.
+CREATE POLICY "users_read_waha_instances" ON public.waha_instances
+    FOR SELECT
+    USING (
+        organization_id IS NULL OR 
+        organization_id IN (SELECT public.fn_user_org_ids()) OR 
+        public.fn_is_platform_admin()
+    );
+
+CREATE POLICY "platform_admin_all_waha" ON public.waha_instances
+    FOR ALL
+    USING (public.fn_is_platform_admin())
+    WITH CHECK (public.fn_is_platform_admin());
+
+-- Adiciona a referência na tabela de sessões para saber em qual container WAHA ela mora
+ALTER TABLE public.channel_sessions
+ADD COLUMN waha_instance_id uuid REFERENCES public.waha_instances(id);

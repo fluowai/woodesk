@@ -3,28 +3,23 @@ import { redirect } from "next/navigation";
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { loadOnboardingState } from "@/app/actions/onboarding/_shared";
 import { Stepper } from "./_components/Stepper";
-import { OutrasOrganizacoes } from "./_components/OutrasOrganizacoes";
 import { SkipToEnd } from "./_components/SkipToEnd";
 import { branding } from "@/lib/branding";
 import { passosVisiveis } from "@/lib/onboarding/passos";
 import { env } from "@/lib/env";
 import { IdiomaProvider } from "@/lib/i18n/IdiomaProvider";
+import { OnboardingShell } from "./_components/OnboardingShell";
+import { AuthProvider } from "@/hooks/auth/AuthProvider";
 
 export default async function OnboardingLayout({ children }: { children: React.ReactNode }) {
   const user = await requireAuth();
   const activeOrg = await resolveActiveOrg(user);
-  // Acompanhamento observa a organização incompleta no shell com saída explícita.
   if (user.support) redirect("/app/inbox");
-  // Sem organização o onboarding não tem o que mostrar — mas mandar para
-  // `/login` fechava o círculo: quem entrasse de novo voltaria para cá. A saída
-  // é a tela que CRIA a organização que falta.
   if (!activeOrg) redirect("/get-started");
 
   const { state, onboardedAt } = await loadOnboardingState(activeOrg.orgId);
   if (onboardedAt) redirect("/app/inbox");
 
-  // Os passos que ESTA instalação oferece, com o que já foi resolvido. O
-  // indicador não decide mais nada sozinho — ele desenha o que recebe.
   const passos = passosVisiveis({ lojaLigada: env.NUVEMSHOP_ENABLED }).map((p) => ({
     segmento: p.segmento,
     rotulo: p.rotulo,
@@ -35,34 +30,57 @@ export default async function OnboardingLayout({ children }: { children: React.R
 
   return (
     <IdiomaProvider locale={user.locale}>
-      <div className="flex min-h-screen flex-col bg-muted/40">
-        <header className="border-b bg-background">
-          <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-6 py-4">
-            <div>
-              <p className="text-xs uppercase tracking-wider text-muted-foreground">{branding().name}</p>
-              <h1 className="text-lg font-semibold tracking-tight">{activeOrg.name}</h1>
+      <AuthProvider user={user} activeOrg={activeOrg}>
+        <OnboardingShell>
+          <div className="mx-auto w-full max-w-[1200px]">
+            
+            <div className="mb-8 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
+              <div>
+                <h1 className="mb-2 text-sm font-bold uppercase tracking-widest text-blue-600">
+                  ONBOARDING {branding().name.toUpperCase()}
+                </h1>
+                <h2 className="text-3xl font-bold tracking-tight text-slate-800">
+                  Vamos configurar seu <span className="text-blue-600">{branding().name}</span>
+                </h2>
+                <p className="mt-2 text-slate-500">
+                  Em poucos passos você estará pronto para atender seus clientes e impulsionar seu negócio.
+                </p>
+              </div>
+              
+              <div className="flex items-center gap-4">
+                <div className="flex max-w-[320px] items-start gap-3 rounded-2xl bg-blue-50/50 border border-blue-100 p-4">
+                  <div className="mt-0.5 text-blue-600">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M12 8L12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M12 16.01L12.01 15.9989" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-blue-900">Que bom ter você aqui!</h4>
+                    <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
+                      Vamos deixar tudo pronto para o seu sucesso.
+                    </p>
+                  </div>
+                </div>
+
+                {isDev ? (
+                  <div className="shrink-0">
+                    <SkipToEnd />
+                  </div>
+                ) : null}
+              </div>
             </div>
-            <div className="flex items-center gap-1">
-              {/*
-                A SAÍDA, para quem tem outra organização. Ver o cabeçalho de
-                `OutrasOrganizacoes`: sem ela, trocar de organização pelo seletor
-                do topo levava a um wizard sem porta de volta — o layout de `/app`
-                sai da árvore e leva o `TenantSwitcher` junto.
-              */}
-              <OutrasOrganizacoes
-                outras={user.organizations
-                  .filter((o) => o.organization_id !== activeOrg.orgId)
-                  .map((o) => ({ id: o.organization_id, nome: o.organization_name }))}
-              />
-              {isDev ? <SkipToEnd /> : null}
+
+            <div className="mb-8">
+              <Stepper passos={passos} />
             </div>
+
+            {children}
+
           </div>
-          <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-            <Stepper passos={passos} />
-          </div>
-        </header>
-        <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8">{children}</main>
-      </div>
+        </OnboardingShell>
+      </AuthProvider>
     </IdiomaProvider>
   );
 }

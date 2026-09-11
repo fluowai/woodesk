@@ -112,33 +112,6 @@ export function SidebarContent({
 
   return (
     <>
-      <div
-        className={cn(
-          "flex h-14 items-center border-b px-4",
-          collapsed ? "justify-center" : "justify-start",
-        )}
-      >
-        {logo && !collapsed ? (
-          // <img> em vez de next/image de propósito: a URL vem de quem hospeda
-          // (banco ou .env), e next/image exige allowlist de domínios fechada em
-          // build — a imagem pré-buildada rejeitaria o domínio do self-hoster.
-          // Altura fixa e largura livre porque a arte enviada tem proporção
-          // desconhecida; forçar as duas distorceria o logo de quem configurou.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={logo} alt={nome} className="h-7 w-auto max-w-[10rem] object-contain" />
-        ) : (
-          <span className={cn("font-semibold tracking-tight", collapsed && "sr-only")}>{nome}</span>
-        )}
-        {collapsed && (
-          <span aria-hidden className="text-lg font-bold text-primary">
-            {/* Spread e não `[0]`: nome começando com emoji ou acento composto
-                quebraria no meio do code point. Mesma regra de `resolveBranding`
-                — a inicial precisa acompanhar o nome que a barra mostra, senão
-                recolher o menu troca a marca. */}
-            {[...nome][0]?.toUpperCase() ?? brand.initial}
-          </span>
-        )}
-      </div>
       {/*
         A DENSIDADE É MEDIDA, NÃO ESTÉTICA.
 
