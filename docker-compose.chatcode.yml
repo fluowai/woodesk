@@ -1,0 +1,395 @@
+version: "3.8"
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# ==============================================================
+# CHAVES GLOBAIS (Reaproveitadas do seu modelo)
+# ==============================================================
+x-global-env: &global-env
+  # App / Infra
+  NODE_ENV: "production"
+  PORT: "3000"
+  ALLOWED_ORIGINS: "https://chatcode.wootech.com.br"
+  CORS_ORIGINS: "https://chatcode.wootech.com.br"
+  DOMAIN: "chatcode.wootech.com.br"
+  VITE_PANEL_URL: "https://chatcode.wootech.com.br"
+  VITE_PUBLIC_APP_URL: "https://chatcode.wootech.com.br"
+  
+  # Supabase
+  VITE_SUPABASE_URL: "https://epgaftsjmqmpczvzsrcc.supabase.co"
+  VITE_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwZ2FmdHNqbXFtcGN6dnpzcmNjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5NjUyNDUsImV4cCI6MjEwMDU0MTI0NX0.3p4x2i_BtGwzp4ElNV-HqeeVlQcQS53SWai5nJ2NTL0"
+  SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NDk2NTI0NSwiZXhwIjoyMTAwNTQxMjQ1fQ.tx6ap1RQ-gPCWn_vQQ7Up-YVknjwnx2F27HWAAUqtwo"
+  SUPABASE_JWT_SECRET: "RISMBLbL3RvTt216f7d3FFQq1SE8pXDMCkcubtboBqT87vV87Da6KvWVY7fDdLHxY918CE3bQm6zy4QGCdmutQ=="
+  DATABASE_URL: "postgresql://postgres.epgaftsjmqmpczvzsrcc:Ru3fxgGYHMepMYm3@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require&default_query_exec_mode=simple_protocol"
+  SUPABASE_DB_URL: "postgresql://postgres.epgaftsjmqmpczvzsrcc:Ru3fxgGYHMepMYm3@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require&default_query_exec_mode=simple_protocol"
+  PGSSLMODE: "require"
+  
+  # IA (Agentes, Woodesk)
+  WOOTECH_AI_BASE_URL: "http://wootech-ai-gateway:3000/v1"
+  WOOTECH_AI_API_KEY: "dummy_key"
+  WOOTECH_AI_ENABLED: "true"
+  OPENAI_API_KEY: "sk-dummy1234567890"
+  GEMINI_API_KEY: "AIzaSy-dummy1234567890"
+  GROQ_API_KEY: "gsk_dummy1234567890123456789012345678901234567890123456"
+  
+  # Minio / Storage
+  MEDIA_STORAGE_PROVIDER: "minio"
+  MINIO_ENDPOINT: "https://storage.wootech.com.br"
+  MINIO_PUBLIC_URL: "https://storage.wootech.com.br"
+  VITE_MINIO_PUBLIC_URL: "https://storage.wootech.com.br"
+  MINIO_ACCESS_KEY: "pH8gKEiDqbTuhO60FDjW"
+  MINIO_SECRET_KEY: "ggONXEIGQDXmuedhockfijY4ORj8octbbrwGSDZi"
+  MINIO_REGION: "us-east-1"
+  MINIO_MEDIA_BUCKET: "imobzy"
+  MINIO_WHATSAPP_BUCKET: "imobzy"
+  
+  # RabbitMQ / Redis (Filas e Worker)
+  RABBITMQ_URL: "amqp://imobzy:Argo%4015077399brsc@rabbitmq:5672/"
+  REDIS_URL: "redis://redis:6379"
+
+services:
+  # ============================================================
+  # APP (FRONTEND + API NEXT.JS) - WOODESK GROWTH OS
+  # ============================================================
+  app:
+    image: ghcr.io/melgarafael/deskcommcrm:stable
+    pull_policy: always
+    depends_on:
+      srh:
+        condition: service_started
+      waha:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging: *default-logging
+    networks:
+      - woo-network
+      - chatcode-internal
+    environment:
+      <<: *global-env
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1024m
+        reservations:
+          memory: 256m
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=woo-network"
+        - "traefik.http.routers.woo-chatcode-app.rule=Host(`chatcode.wootech.com.br`)"
+        - "traefik.http.routers.woo-chatcode-app.entrypoints=websecure"
+        - "traefik.http.routers.woo-chatcode-app.tls=true"
+        - "traefik.http.routers.woo-chatcode-app.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.woo-chatcode-app.priority=1"
+        - "traefik.http.routers.woo-chatcode-app.service=woo-chatcode-app"
+        - "traefik.http.routers.woo-chatcode-app.middlewares=woo-chatcode-compress"
+        - "traefik.http.services.woo-chatcode-app.loadbalancer.server.port=3000"
+        - "traefik.http.middlewares.woo-chatcode-compress.compress=true"
+
+  # ============================================================
+  # WORKER AGENT ENGINE
+  # ============================================================
+  worker:
+    image: ghcr.io/melgarafael/deskcomm-worker:stable
+    pull_policy: always
+    environment:
+      <<: *global-env
+      WAHA_API_BASE_URL: http://waha:3000
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512m
+        reservations:
+          memory: 128m
+
+  # ============================================================
+  # AGENT ORCHESTRATOR (Orquestrador de Subagentes IA)
+  # ============================================================
+  agent-orchestrator:
+    image: ghcr.io/melgarafael/woodesk-orchestrator:latest
+    environment:
+      <<: *global-env
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512m
+
+  # ============================================================
+  # LEAD FINDER & ENRICHMENT (Integração Google Maps + Scraping)
+  # ============================================================
+  lead-finder:
+    image: ghcr.io/melgarafael/woodesk-lead-finder:latest
+    environment:
+      <<: *global-env
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512m
+
+  # ============================================================
+  # LOCAL SEO & GEO GRID (Monitoramento de Ranking)
+  # ============================================================
+  local-seo:
+    image: ghcr.io/melgarafael/woodesk-local-seo:latest
+    environment:
+      <<: *global-env
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256m
+
+  # ============================================================
+  # VOICE AI PIPECAT (Realtime Voice / STT / TTS)
+  # ============================================================
+  voice-ai:
+    image: ghcr.io/melgarafael/woodesk-voice:latest
+    environment:
+      <<: *global-env
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512m
+
+  # ============================================================
+  # INSTAGRAM STUDIO (Marketing, Auto-posting, DM Inbox)
+  # ============================================================
+  instagram-studio:
+    image: ghcr.io/melgarafael/woodesk-instagram:latest
+    environment:
+      <<: *global-env
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512m
+
+  # ============================================================
+  # WAHA (WHATSAPP ENGINE CORE)
+  # ============================================================
+  waha:
+    image: devlikeapro/waha:latest-2026.7.2
+    environment:
+      <<: *global-env
+      WAHA_API_KEY: "sha512:fb145f12f69de4aa95e9d3664ead5353b344decc130418e5cb8b21808cb08e833"
+      WHATSAPP_HOOK_URL: "http://app:3000/api/v1/webhooks/waha"
+      WHATSAPP_HOOK_EVENTS: "message.any,message.ack,message.edited,message.revoked,session.status,state.change"
+      WHATSAPP_HOOK_HMAC: "f8a2c9e1d4b7f3a6e2d8c5b9a1f4e7d2c6b3a9f1e5d8c2b6a4f7e1d3c9b5a8f2"
+      WHATSAPP_DEFAULT_ENGINE: "NOWEB"
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+    volumes:
+      - waha-data:/app/.sessions
+      - waha-media:/app/.media
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1280m
+
+  # ============================================================
+  # WHATSAPP WHATSMEOW (Microserviço Opcional p/ Sessões Nativas)
+  # ============================================================
+  whatsapp-whatsmeow:
+    image: ghcr.io/melgarafael/woodesk-whatsmeow:latest
+    environment:
+      <<: *global-env
+      WHATSAPP_SERVICE_TOKEN: "b145f12f69de4aa95e9d3664ead5353b344decc130418e5cb8b21808cb08e833"
+      WHATSAPP_INTERNAL_TOKEN: "61b0739dac8483b85be02e43e9ea35afb52fb2f4b0bb4e0af077f380db18fb5b"
+      WHATSAPP_WS_JWT_SECRET: "f8a2c9e1d4b7f3a6e2d8c5b9a1f4e7d2c6b3a9f1e5d8c2b6a4f7e1d3c9b5a8f2"
+    volumes:
+      - whatsmeow-data:/app/data
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256m
+
+  # ============================================================
+  # REDIS (Filas BullMQ + Cache Geral)
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256m
+
+  # ============================================================
+  # SERVERLESS REDIS HTTP (SRH)
+  # ============================================================
+  srh:
+    image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: "SRH_DUMMY_TOKEN_WOODESK"
+      SRH_CONNECTION_STRING: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+
+  # ============================================================
+  # SCHEDULER (Cron Jobs Autônomos)
+  # ============================================================
+  scheduler:
+    image: ghcr.io/melgarafael/deskcomm-scheduler:stable
+    pull_policy: always
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      TZ: UTC
+      INTERNAL_SECRET: "INTERNAL_CRON_SECRET_WOODESK"
+    logging: *default-logging
+    networks:
+      - chatcode-internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: unless-stopped
+
+# ==============================================================
+# NETWORKS E VOLUMES
+# ==============================================================
+networks:
+  woo-network:
+    external: true
+  chatcode-internal:
+    driver: overlay
+    attachable: true
+
+volumes:
+  waha-data:
+    driver: local
+  waha-media:
+    driver: local
+  whatsmeow-data:
+    driver: local
