@@ -7,7 +7,7 @@ import { avisarRespostaDeCasoObsoleto } from "@/lib/atendimento/aviso-caso-obsol
 import { withServiceJob } from "@/lib/atendimento/fronteira-server";
 import { StaleServiceBoundaryError } from "@/lib/atendimento/fronteira";
 /**
- * Worker 24/7 do agent-engine (fusão Vendaval → DeskcommCRM) — o processo
+ * Worker 24/7 do agent-engine — o processo
  * long-running que o CRM não tinha: fila durável, cron/follow-up, drain do
  * event_log e os turnos do agente rico.
  *
@@ -81,6 +81,16 @@ import {
 } from "@/lib/agent-engine/agent/followup-turn";
 import { createCaseReplyTurnHandler } from "@/lib/agent-engine/agent/case-reply-turn";
 import { createOperatorTurnHandler } from "@/lib/agent-engine/agent/operator-turn";
+import { createLeadFinderSearchHandler } from "@/lib/woodesk/lead-finder-worker";
+import { createBrowserImportProvider } from "@/lib/woodesk/providers/browser-import";
+import { createLeadEnrichmentHandler } from "@/lib/woodesk/lead-enrichment-worker";
+import { createLocalSeoGridHandler } from "@/lib/woodesk/local-seo-worker";
+import { createHttpVoiceProvider, createUnavailableVoiceProvider, createVoiceCallHandler } from "@/lib/woodesk/voice-worker";
+import { createAgentTaskHandler } from "@/lib/woodesk/agent-task-worker";
+import { createCampaignExecutionHandler, createHttpCampaignDeliveryProvider } from "@/lib/woodesk/campaign-worker";
+import { createGoogleBusinessSyncHandler } from "@/lib/woodesk/google-business-worker";
+import { createContentPublishHandler, resolveInstagramContentProvider } from "@/lib/woodesk/content-worker";
+import { createInstagramReplyHandler } from "@/lib/woodesk/instagram/reply-worker";
 import { completeTurnForEnrollment, createPgAdminClient } from "@/lib/followup/turn-bridge";
 import { seedPlatformPlaybook } from "@/lib/agent-engine/agent/playbook-seed";
 import { runCronLoop } from "@/lib/agent-engine/cron/scheduler";
@@ -619,6 +629,21 @@ export async function main(): Promise<void> {
   // worker que não conhecesse o kind faria os jobs morrerem em 'dead' sem que
   // ninguém entendesse por quê.
   handlers.set("operator_turn", createOperatorTurnHandler(turnDeps));
+  handlers.set("lead_finder_search", createLeadFinderSearchHandler(createBrowserImportProvider()));
+  handlers.set("lead_enrichment", createLeadEnrichmentHandler());
+  handlers.set("local_seo_grid", createLocalSeoGridHandler(createBrowserImportProvider()));
+  const voiceProvider = env.VOICE_PROVIDER && env.VOICE_PROVIDER_BASE_URL && env.VOICE_PROVIDER_TOKEN
+    ? createHttpVoiceProvider({ id: env.VOICE_PROVIDER, baseUrl: env.VOICE_PROVIDER_BASE_URL, bearerToken: env.VOICE_PROVIDER_TOKEN })
+    : createUnavailableVoiceProvider("unconfigured");
+  handlers.set("voice_call", createVoiceCallHandler(voiceProvider));
+  handlers.set("agent_task", createAgentTaskHandler(turnDeps.llmCfg));
+  const campaignProvider = env.CAMPAIGN_PROVIDER_ID && env.CAMPAIGN_PROVIDER_BASE_URL && env.CAMPAIGN_PROVIDER_TOKEN
+    ? createHttpCampaignDeliveryProvider({ id: env.CAMPAIGN_PROVIDER_ID, baseUrl: env.CAMPAIGN_PROVIDER_BASE_URL, bearerToken: env.CAMPAIGN_PROVIDER_TOKEN })
+    : undefined;
+  handlers.set("campaign_execution", createCampaignExecutionHandler(campaignProvider));
+  handlers.set("google_business_sync", createGoogleBusinessSyncHandler());
+  handlers.set("content_publish", createContentPublishHandler(undefined, (job, pool, instagramAccountId) => resolveInstagramContentProvider(pool, job.organization_id, instagramAccountId)));
+  handlers.set("instagram_reply", createInstagramReplyHandler());
   await startWorker(env, handlers, log);
 }
 

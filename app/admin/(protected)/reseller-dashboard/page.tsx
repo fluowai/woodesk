@@ -3,7 +3,7 @@ import { ResellerDashboardClient } from "./_client";
 import { Suspense } from "react";
 
 export const metadata: Metadata = {
-  title: "Reseller Dashboard | DeskcommCRM",
+  title: "Reseller Dashboard | Woodesk",
 };
 
 export default function ResellerDashboardPage() {

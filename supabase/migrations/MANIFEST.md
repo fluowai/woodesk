@@ -287,5 +287,39 @@ To re-apply on a fresh Supabase project, replay the migrations in version order 
 | `20260907060000` | `0230_reserva_pre_go_live` | A reserva transacional de novos canais WAHA preserva o pré-go-live da plataforma; retry mantém política e identidade existentes. Forward-fix da integração, sem alterar 0228 aplicada. |
 
 | `20260909190000` | `0232_nome_de_sessao_waha_cabe_no_teto_do_waha` | `fn_reserve_channel_connection` gerava `waha_session_name` de 69 chars (`org_<32>_<32>`); o WAHA latest-2026.7.2 valida `name` com @MaxLength(54) e todo `POST /api/sessions` de canal novo tomava 400 (`waha_create_400`). Prefixo da org encurta para 8 (`org_<8>_<32>` = 45), alinhado com a busca de canal de onboarding no mesmo corpo. Repara canais WAHA nunca pareados com nome fora do teto. Forward-fix da 0230. |
-| `20260911000000` | `0140_add_saas_plans` | Cria tabela de planos e limites por organiza��o, integrando com trigger em user_organizations p/ limitar uso. |
-| `20260911000001` | `0141_add_waha_instances` | Cria tabela de inst�ncias do WAHA para clusteriza��o e load balancing. |
+| `20260911000000` | `0260_add_saas_plans` | Cria tabela de planos e limites por organização, integrando com trigger em user_organizations para limitar uso. |
+| `20260911000001` | `0261_add_waha_instances` | Cria tabela de instâncias do WAHA para clusterização e load balancing. |
+
+| `20260912100000` | `0233_woodesk_lead_finder` | Fundação tenant-aware do Lead Finder: feature flags, buscas assíncronas, resultados normalizados e enriquecimento idempotente. |
+
+| `20260912110000` | `0234_woodesk_local_seo` | Fundação tenant-aware de Local SEO: palavras-chave, execuções GeoGrid, pontos e concorrentes históricos. |
+
+| `20260912120000` | `0235_woodesk_google_business` | Métricas oficiais do Google Business Profile, reutilizando OAuth Google existente e snapshots idempotentes. |
+
+| `20260912130000` | `0236_woodesk_voice` | Fundação tenant-aware de Voice AI, separada de áudio WhatsApp, com ciclo de chamada e transcrições por provider. |
+
+| `20260912140000` | `0237_woodesk_marketing_content` | Ativos editoriais e calendário tenant-aware, com aprovação humana e publicação desacoplada de Meta Ads. |
+| `20260912150000` | `0238_woodesk_marketing_campaigns` | Woodesk marketing campaigns |
+| `20260912160000` | `0239_woodesk_plan_entitlements` | Woodesk plan entitlements |
+| `20260912170000` | `0240_woodesk_lead_enrichment_queue` | Woodesk lead enrichment queue |
+| `20260912180000` | `0241_woodesk_content_approval_timestamp` | Woodesk content approval timestamp |
+| `20260912190000` | `0242_woodesk_agent_tasks` | Woodesk durable agent tasks |
+| `20260912200000` | `0243_woodesk_commercial_proposals` | Woodesk commercial proposals and items |
+
+| `20260912210000` | `0244_woodesk_proposal_signing` | Secure public proposal sharing and electronic acceptance |
+
+| `20260912220000` | `0245_woodesk_queue_kinds` | Aligns durable queue CHECK with Woodesk workers |
+
+| `20260912230000` | `0246_woodesk_content_publish_queue` | Durable editorial content publication jobs |
+| `20260913000000` | `0247_woodesk_usage_events` | Medição central idempotente de uso por organização e capability. |
+| `20260913100000` | `0248_woodesk_local_seo_target` | Identidade explícita do negócio-alvo por palavra-chave para evitar ranking sintético. |
+| `20260913110000` | `0249_woodesk_goals` | Metas operacionais tenant-aware por métrica e período explícito. |
+| `20260913120000` | `0250_woodesk_notifications` | Notificações transacionais persistidas, tenant-aware, com leitura e marcação como lida. |
+| `20260913130000` | `0251_woodesk_notification_idempotency` | Chave única por organização para retries seguros de notificações. |
+| `20260913140000` | `0252_woodesk_notification_reads` | Recibos de leitura por usuário para notificações compartilhadas. |
+| `20260913150000` | `0253_woodesk_instagram_accounts` | Contas Instagram por organização, com token Meta cifrado, RLS, unicidade por conta e coluna secreta inacessível ao frontend. |
+| `20260913160000` | `0254_woodesk_instagram_channel_session` | Vocabulário e ponte tenant-aware para projetar contas Instagram no inbox canônico, sem reutilizar identificadores WhatsApp. |
+| `20260913170000` | `0255_woodesk_instagram_identity` | Identidade externa Instagram separada de `wa_identity`, com unicidade tenant-aware e sem inferir consentimento. |
+| `20260913180000` | `0256_woodesk_instagram_engine` | Engine explícito para sessões `instagram_graph`, preservando os engines WhatsApp existentes. |
+| `20260913190000` | `0257_woodesk_instagram_reply_queue` | Enfileira respostas Instagram para execução assíncrona no worker, sem bloquear requests. |
+| `20260913200000` | `0258_woodesk_llm_conversation_cost` | Preserva a conversa canônica na telemetria de IA para custo por conversa. |

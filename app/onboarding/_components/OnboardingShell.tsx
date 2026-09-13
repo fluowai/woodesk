@@ -23,7 +23,7 @@ import { useT } from "@/hooks/i18n/useT";
 
 function OnboardingSidebar() {
   const t = useT();
-  const { name: appName, logo_url: logoUrl } = branding();
+  const { name: appName, logoUrl } = branding();
 
   return (
     <div className="flex h-full w-64 flex-col border-r border-slate-200 bg-white">
@@ -111,7 +111,7 @@ function OnboardingTopBar() {
         <input 
           type="text" 
           placeholder={t("Buscar algo no onboarding...")}
-          className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+            className="w-full bg-transparent text-sm outline-hidden placeholder:text-slate-400"
         />
       </div>
       <div className="flex shrink-0 items-center gap-4">

@@ -1,5 +1,5 @@
-const fs = require('fs');
-const { Client } = require('pg');
+import fs from "node:fs";
+import { Client } from "pg";
 
 async function main() {
   const dbUrl = "postgresql://postgres.qsdcvxjffbezlibythxr:15H0RGfudF24rEST@aws-0-sa-east-1.pooler.supabase.com:6543/postgres";

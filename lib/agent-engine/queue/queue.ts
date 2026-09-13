@@ -24,7 +24,16 @@ export type JobKind =
   | 'case_reply_turn'
   | 'operator_turn'
   | 'transactional_delivery'
-  | 'approved_reply';
+  | 'approved_reply'
+  | 'lead_finder_search'
+  | 'local_seo_grid'
+  | 'voice_call'
+  | 'lead_enrichment'
+  | 'agent_task'
+  | 'campaign_execution'
+  | 'google_business_sync'
+  | 'content_publish'
+  | 'instagram_reply';
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'dead';
 
 export interface JobRow {

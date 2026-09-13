@@ -94,3 +94,26 @@ describe("loadEnv — a chave da OpenRouter existe no contrato do worker", () =>
     expect("VAR_QUE_NAO_EXISTE_NO_SCHEMA" in env).toBe(false);
   });
 });
+
+describe("loadEnv — providers Woodesk opcionais", () => {
+  it("preserva configuração completa de Voice e campanhas", () => {
+    const env = loadEnv({
+      ...REQUIRED,
+      VOICE_PROVIDER: "voicebox",
+      VOICE_PROVIDER_BASE_URL: "https://voice.example.test",
+      VOICE_PROVIDER_TOKEN: "voice-token",
+      CAMPAIGN_PROVIDER_ID: "campaign-gateway",
+      CAMPAIGN_PROVIDER_BASE_URL: "https://campaigns.example.test",
+      CAMPAIGN_PROVIDER_TOKEN: "campaign-token",
+    });
+    expect(env.VOICE_PROVIDER).toBe("voicebox");
+    expect(env.VOICE_PROVIDER_BASE_URL).toBe("https://voice.example.test");
+    expect(env.CAMPAIGN_PROVIDER_ID).toBe("campaign-gateway");
+  });
+
+  it("permite boot sem providers externos configurados", () => {
+    const env = loadEnv(REQUIRED);
+    expect(env.VOICE_PROVIDER).toBeUndefined();
+    expect(env.CAMPAIGN_PROVIDER_BASE_URL).toBeUndefined();
+  });
+});

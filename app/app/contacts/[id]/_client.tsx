@@ -23,6 +23,7 @@ import { PropostasDeDado } from "@/components/contacts/PropostasDeDado";
 import { ConversaNoDossie } from "@/components/kanban/ConversaNoDossie";
 import { rotuloDoContato } from "@/lib/contacts/rotulo-do-contato";
 import { phoneForDisplay } from "@/lib/channels/phone-variants";
+import { OmnichannelTimeline } from "./_components/OmnichannelTimeline";
 
 interface Props {
   contactId: string;
@@ -129,6 +130,7 @@ export function ContactDetailClient({ contactId }: Props) {
         <TabsList>
           <TabsTrigger value="overview">{t("Visão geral")}</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          <TabsTrigger value="growth-timeline">Growth OS</TabsTrigger>
           {isAdmin && <TabsTrigger value="lgpd">LGPD</TabsTrigger>}
         </TabsList>
 
@@ -191,6 +193,10 @@ export function ContactDetailClient({ contactId }: Props) {
 
         <TabsContent value="timeline" className="mt-4">
           <TimelineView contactId={contactId} />
+        </TabsContent>
+
+        <TabsContent value="growth-timeline" className="mt-4">
+          <OmnichannelTimeline contactId={contactId} />
         </TabsContent>
 
         {isAdmin && (

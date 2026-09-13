@@ -462,6 +462,7 @@ export function createOperatorTurnHandler(deps: InboundTurnDeps) {
           {
             tenantId,
             leadId,
+            conversationId: payload.conversation_id,
             jobId: job.id,
             // Atribuição de custo própria: sem isto o gasto do Operador entraria
             // como se fosse conversa, e "quanto custa ligar o papel?" — a

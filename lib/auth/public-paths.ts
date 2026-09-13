@@ -36,7 +36,10 @@ export const PUBLIC_PATHS: RegExp[] = [
   // Ancorados com `$` de propósito — `/^\/api\/v1\/agenda\/google\// deixaria
   // qualquer sub-path futuro nascer público de carona.
   /^\/api\/v1\/agenda\/google\/callback$/,
+  /^\/api\/v1\/woodesk\/instagram\/callback$/,
   /^\/api\/v1\/integrations\/nuvemshop\/callback$/,
+  /^\/api\/v1\/public\/proposals\/[^/]+$/,
+  /^\/public\/proposals\/[^/]+$/,
   /^\/api\/internal\//,
   /^\/api\/mcp(\/.*)?$/,
   /^\/_next\//,

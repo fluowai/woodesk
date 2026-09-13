@@ -69,6 +69,7 @@ export function logInvocation(row: LogInvocationInput): void {
         // invocation_kind → purpose, prompt/completion → input/output.
         const { error } = await admin.from("llm_calls").insert({
           organization_id: row.organization_id,
+          conversation_id: row.conversation_id,
           // NORMALIZA AQUI, e não no chamador (issue #160). O tipo já diz
           // `string | null`, mas `string` aceita `""` — e foi exatamente `?? ""`
           // que fez a tabela ficar vazia numa VPS com tráfego real, porque o

@@ -125,7 +125,7 @@ export function WelcomeForm({ defaultOrgName }: { defaultOrgName: string }) {
           type="checkbox"
           checked={accepted}
           onChange={(e) => setAccepted(e.target.checked)}
-          className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+              className="mt-0.5 rounded-md border-slate-300 text-blue-600 focus:ring-blue-600"
           required
         />
         <span>

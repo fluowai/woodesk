@@ -7729,26 +7729,8 @@ create policy tenant_isolation_agent_case_events_insert on agent_case_events
 -- estender CHECKs de job_queue (kind + coerência kind⇔contato) p/ case_reply_turn
 -- nomes reais conferidos no banco linkado: job_queue_kind_check (named) e
 -- job_queue_check (anônimo, gerado pelo Postgres) para o CHECK de coerência.
-alter table job_queue drop constraint if exists job_queue_kind_check;
-alter table job_queue add constraint job_queue_kind_check
-  -- 'operator_turn' (migration 0111, spec 16 §3.2) entra NESTE bloco, não num
-  -- novo no fim: reconstruir a mesma constraint em N blocos quebra o update.sh
-  -- de todo clone que já tenha uma linha de vocabulário posterior — os blocos
-  -- antigos rodam antes e falham em cadeia. Vigiado por
-  -- tests/unit/baseline-constraint-reconstruida.test.ts.
-  -- 'transactional_delivery' (0226) segue a mesma consolidação de vocabulário.
-  check (kind in ('inbound_turn','followup_turn','watchdog','flywheel','case_reply_turn','operator_turn','transactional_delivery','approved_reply'));
-alter table job_queue drop constraint if exists job_queue_turn_needs_contact;
-do $$
-declare c text;
-begin
-  select conname into c from pg_constraint
-   where conrelid = 'job_queue'::regclass and contype='c'
-     and pg_get_constraintdef(oid) ilike '%contact_id is not null%';
-  if c is not null then execute format('alter table job_queue drop constraint %I', c); end if;
-end $$;
-alter table job_queue add constraint job_queue_turn_needs_contact
-  check ((kind in ('inbound_turn','followup_turn','case_reply_turn','operator_turn','transactional_delivery','approved_reply')) = (contact_id is not null));
+-- Constraints de job_queue são reconstruídas uma única vez no apêndice final,
+-- depois de todos os vocabulários Woodesk (ver bloco 0258).
 
 alter table cron_jobs drop constraint if exists cron_jobs_job_kind_check;
 alter table cron_jobs add constraint cron_jobs_job_kind_check
@@ -9379,22 +9361,7 @@ alter table public.channel_sessions alter column waha_session_name drop not null
 alter table public.channel_sessions
   add column if not exists zernio_account_id text;
 
-alter table public.channel_sessions
-  drop constraint if exists channel_sessions_provider_check;
-
-alter table public.channel_sessions
-  add constraint channel_sessions_provider_check
-  check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text]));
-
-alter table public.channel_sessions
-  drop constraint if exists channel_sessions_provider_ref_check;
-
-alter table public.channel_sessions
-  add constraint channel_sessions_provider_ref_check check (
-    (provider = 'waha'       and waha_session_name    is not null) or
-    (provider = 'meta_cloud' and meta_phone_number_id is not null) or
-    (provider = 'zernio'     and zernio_account_id    is not null)
-  );
+-- Provider constraints are rebuilt once in the final Instagram-aware block.
 
 comment on column public.channel_sessions.zernio_account_id is
   'Identificador da conta conectada NO INTERMEDIÁRIO (accountId), não o phone_number_id da Meta. É o que endereça envio e webhook. Espelhado em lib/channels/session-ref.ts.';
@@ -23274,7 +23241,7 @@ update public.channel_sessions
 
 notify pgrst,'reload schema';
 
--- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
+-- ---- VARREDURA anon histórica: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ ESTE BLOCO É, DE PROPÓSITO, O ÚLTIMO DO ARQUIVO. Apêndice novo entra ANTES
 
@@ -23363,11 +23330,13 @@ CREATE TABLE public.plans (
 
 ALTER TABLE public.plans ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "platform_admin_all_plans" ON public.plans;
 CREATE POLICY "platform_admin_all_plans" ON public.plans
     FOR ALL
     USING (public.fn_is_platform_admin())
     WITH CHECK (public.fn_is_platform_admin());
 
+DROP POLICY IF EXISTS "users_read_plans" ON public.plans;
 CREATE POLICY "users_read_plans" ON public.plans
     FOR SELECT
     USING (true);
@@ -23383,17 +23352,15 @@ DECLARE
     v_plan_max_users integer;
     v_current_users integer;
 BEGIN
-    -- Busca limite
     SELECT p.max_users INTO v_plan_max_users
     FROM public.organizations o
     JOIN public.plans p ON p.id = o.plan_id
     WHERE o.id = NEW.organization_id;
 
     IF v_plan_max_users IS NULL THEN
-        RETURN NEW; -- Sem plano = sem limite restrito nesta fase
+        RETURN NEW;
     END IF;
 
-    -- Conta usuários atuais
     SELECT count(*) INTO v_current_users
     FROM public.user_organizations
     WHERE organization_id = NEW.organization_id;
@@ -23432,6 +23399,7 @@ ALTER TABLE public.waha_instances ENABLE ROW LEVEL SECURITY;
 
 -- As instâncias "públicas" (organization_id NULL) são visíveis para todos
 -- As dedicadas são visíveis apenas para a org.
+DROP POLICY IF EXISTS "users_read_waha_instances" ON public.waha_instances;
 CREATE POLICY "users_read_waha_instances" ON public.waha_instances
     FOR SELECT
     USING (
@@ -23440,6 +23408,7 @@ CREATE POLICY "users_read_waha_instances" ON public.waha_instances
         public.fn_is_platform_admin()
     );
 
+DROP POLICY IF EXISTS "platform_admin_all_waha" ON public.waha_instances;
 CREATE POLICY "platform_admin_all_waha" ON public.waha_instances
     FOR ALL
     USING (public.fn_is_platform_admin())
@@ -23448,3 +23417,392 @@ CREATE POLICY "platform_admin_all_waha" ON public.waha_instances
 -- Adiciona a referência na tabela de sessões para saber em qual container WAHA ela mora
 ALTER TABLE public.channel_sessions
 ADD COLUMN waha_instance_id uuid REFERENCES public.waha_instances(id);
+
+-- Appended by migration 20260912100000_0233_woodesk_lead_finder.sql
+-- Lead Finder Woodesk: feature flags, searches, normalized results and enrichment.
+CREATE TABLE IF NOT EXISTS public.feature_flags (
+  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  key text NOT NULL,
+  enabled boolean NOT NULL DEFAULT false,
+  config jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, key),
+  CONSTRAINT feature_flags_key_format CHECK (key ~ '^[a-z][a-z0-9_.-]{1,99}$')
+);
+CREATE TABLE IF NOT EXISTS public.lead_finder_searches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  requested_by uuid REFERENCES auth.users(id) ON DELETE SET NULL, provider_id text NOT NULL,
+  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','failed','cancelled')),
+  query jsonb NOT NULL DEFAULT '{}'::jsonb, result_count integer NOT NULL DEFAULT 0 CHECK (result_count >= 0),
+  error_code text, started_at timestamptz, finished_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.lead_finder_results (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  search_id uuid NOT NULL REFERENCES public.lead_finder_searches(id) ON DELETE CASCADE, external_id text, source_url text, name text NOT NULL,
+  category text, phone text, website text, instagram text, address text, city text, state text, rating numeric(2,1) CHECK (rating IS NULL OR (rating >= 0 AND rating <= 5)),
+  review_count integer CHECK (review_count IS NULL OR review_count >= 0), latitude numeric(9,6), longitude numeric(9,6), normalized_phone text,
+  has_whatsapp boolean, status text NOT NULL DEFAULT 'new' CHECK (status IN ('new','imported','rejected','duplicate')),
+  imported_lead_id uuid REFERENCES public.crm_leads(id) ON DELETE SET NULL, raw_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE (organization_id, search_id, external_id)
+);
+CREATE TABLE IF NOT EXISTS public.lead_enrichment (
+  result_id uuid PRIMARY KEY REFERENCES public.lead_finder_results(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed')),
+  email text, facebook text, domain text, website_analysis jsonb NOT NULL DEFAULT '{}'::jsonb, score integer CHECK (score IS NULL OR (score >= 0 AND score <= 100)),
+  score_band text CHECK (score_band IS NULL OR score_band IN ('low','medium','high')), score_reasons jsonb NOT NULL DEFAULT '[]'::jsonb,
+  error_code text, processed_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now()
+);
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['feature_flags','lead_finder_searches','lead_finder_results','lead_enrichment'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I_all ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY tenant_isolation_%I_all ON public.%I FOR ALL USING (organization_id IN (SELECT public.fn_user_org_ids())) WITH CHECK (organization_id IN (SELECT public.fn_user_org_ids()))', t, t);
+  END LOOP;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_lead_finder_searches_due ON public.lead_finder_searches (organization_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_lead_finder_results_org ON public.lead_finder_results (organization_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_lead_enrichment_org_status ON public.lead_enrichment (organization_id, status);
+
+-- Lead Finder usa a fila durável existente e não possui contact_id.
+-- Queue constraints are consolidated in the final block below.
+
+-- Appended by migration 20260912110000_0234_woodesk_local_seo.sql
+CREATE TABLE IF NOT EXISTS public.local_keywords (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  keyword text NOT NULL, locale text NOT NULL DEFAULT 'pt-BR', active boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (organization_id, keyword, locale)
+);
+CREATE TABLE IF NOT EXISTS public.local_grid_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  keyword_id uuid NOT NULL REFERENCES public.local_keywords(id) ON DELETE CASCADE, grid_size smallint NOT NULL CHECK (grid_size IN (3,5,7,9,11)),
+  center_latitude numeric(9,6) NOT NULL CHECK (center_latitude BETWEEN -90 AND 90), center_longitude numeric(9,6) NOT NULL CHECK (center_longitude BETWEEN -180 AND 180),
+  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','failed','cancelled')), provider_id text NOT NULL, started_at timestamptz, finished_at timestamptz, error_code text, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.local_grid_points (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES public.local_grid_runs(id) ON DELETE CASCADE, row_index smallint NOT NULL, column_index smallint NOT NULL,
+  latitude numeric(9,6) NOT NULL, longitude numeric(9,6) NOT NULL, position integer CHECK (position IS NULL OR position > 0), top_result_name text, top_result_url text, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (run_id, row_index, column_index)
+);
+CREATE TABLE IF NOT EXISTS public.local_competitors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  keyword_id uuid NOT NULL REFERENCES public.local_keywords(id) ON DELETE CASCADE, business_name text NOT NULL, position integer CHECK (position IS NULL OR position > 0), rating numeric(2,1) CHECK (rating IS NULL OR rating BETWEEN 0 AND 5), review_count integer CHECK (review_count IS NULL OR review_count >= 0), distance_meters integer CHECK (distance_meters IS NULL OR distance_meters >= 0), website text, phone text, source_url text, observed_at timestamptz NOT NULL DEFAULT now()
+);
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['local_keywords','local_grid_runs','local_grid_points','local_competitors'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I_all ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY tenant_isolation_%I_all ON public.%I FOR ALL USING (organization_id IN (SELECT public.fn_user_org_ids())) WITH CHECK (organization_id IN (SELECT public.fn_user_org_ids()))', t, t);
+  END LOOP;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_local_keywords_active ON public.local_keywords (organization_id, active);
+CREATE INDEX IF NOT EXISTS idx_local_grid_runs_due ON public.local_grid_runs (organization_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_local_grid_points_run ON public.local_grid_points (organization_id, run_id);
+CREATE INDEX IF NOT EXISTS idx_local_competitors_keyword ON public.local_competitors (organization_id, keyword_id, observed_at);
+-- Queue constraints are consolidated in the final block below.
+
+-- Appended by migration 20260912120000_0235_woodesk_google_business.sql
+CREATE TABLE IF NOT EXISTS public.google_business_locations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  connection_id uuid NOT NULL REFERENCES public.calendar_connections(id) ON DELETE CASCADE, resource_name text NOT NULL, title text NOT NULL,
+  address jsonb NOT NULL DEFAULT '{}'::jsonb, metadata jsonb NOT NULL DEFAULT '{}'::jsonb, status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','error')),
+  last_synced_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (organization_id, resource_name)
+);
+CREATE TABLE IF NOT EXISTS public.google_business_metrics (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  location_id uuid NOT NULL REFERENCES public.google_business_locations(id) ON DELETE CASCADE, period_start date NOT NULL, period_end date NOT NULL,
+  metrics jsonb NOT NULL DEFAULT '{}'::jsonb, source text NOT NULL DEFAULT 'google_business_profile_performance', fetched_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (location_id, period_start, period_end, source), CHECK (period_end >= period_start)
+);
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['google_business_locations','google_business_metrics'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I_all ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY tenant_isolation_%I_all ON public.%I FOR ALL USING (organization_id IN (SELECT public.fn_user_org_ids())) WITH CHECK (organization_id IN (SELECT public.fn_user_org_ids()))', t, t);
+  END LOOP;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_google_business_locations_org_status ON public.google_business_locations (organization_id, status);
+CREATE INDEX IF NOT EXISTS idx_google_business_metrics_location_period ON public.google_business_metrics (organization_id, location_id, period_start DESC);
+
+-- Appended by migration 20260912130000_0236_woodesk_voice.sql
+CREATE TABLE IF NOT EXISTS public.voice_calls (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  contact_id uuid REFERENCES public.contacts(id) ON DELETE SET NULL, provider_id text NOT NULL, direction text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','connecting','in_progress','completed','failed','cancelled')), external_id text,
+  started_at timestamptz, ended_at timestamptz, duration_seconds integer CHECK (duration_seconds IS NULL OR duration_seconds >= 0), cost_cents integer CHECK (cost_cents IS NULL OR cost_cents >= 0), metadata jsonb NOT NULL DEFAULT '{}'::jsonb, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE (organization_id, provider_id, external_id)
+);
+CREATE TABLE IF NOT EXISTS public.voice_transcripts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  call_id uuid NOT NULL REFERENCES public.voice_calls(id) ON DELETE CASCADE, transcript text NOT NULL, language text, provider_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (call_id, provider_id)
+);
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['voice_calls','voice_transcripts'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I_all ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY tenant_isolation_%I_all ON public.%I FOR ALL USING (organization_id IN (SELECT public.fn_user_org_ids())) WITH CHECK (organization_id IN (SELECT public.fn_user_org_ids()))', t, t);
+  END LOOP;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_voice_calls_org_status ON public.voice_calls (organization_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_voice_calls_contact ON public.voice_calls (organization_id, contact_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_voice_transcripts_call ON public.voice_transcripts (organization_id, call_id);
+
+-- Forward-fix 0236: jobs de chamada de voz sao assíncronos e sem contact_id obrigatório.
+-- Queue constraints are consolidated in the final block below.
+
+-- Appended by migration 20260912140000_0237_woodesk_marketing_content.sql
+CREATE TABLE IF NOT EXISTS public.marketing_contents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  channel text NOT NULL CHECK (channel IN ('instagram','whatsapp','email','sms','voice')), content_type text NOT NULL CHECK (content_type IN ('post','story','reel','carousel','caption','script','email')),
+  status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','review','approved','scheduled','published','failed','archived')), title text, body text NOT NULL, media jsonb NOT NULL DEFAULT '[]'::jsonb, context jsonb NOT NULL DEFAULT '{}'::jsonb,
+  generated_by_agent_id uuid REFERENCES public.ai_agents(id) ON DELETE SET NULL, created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL, approved_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  published_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.content_calendar_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE, content_id uuid NOT NULL REFERENCES public.marketing_contents(id) ON DELETE CASCADE,
+  scheduled_for timestamptz NOT NULL, timezone text NOT NULL DEFAULT 'America/Sao_Paulo', status text NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','processing','published','failed','cancelled')), provider_id text, external_id text, error_code text, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (content_id, scheduled_for)
+);
+DO $$ DECLARE t text; BEGIN
+  FOREACH t IN ARRAY ARRAY['marketing_contents','content_calendar_items'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I_all ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY tenant_isolation_%I_all ON public.%I FOR ALL USING (organization_id IN (SELECT public.fn_user_org_ids())) WITH CHECK (organization_id IN (SELECT public.fn_user_org_ids()))', t, t);
+  END LOOP;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_marketing_contents_org_status ON public.marketing_contents (organization_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_content_calendar_due ON public.content_calendar_items (organization_id, status, scheduled_for);
+
+-- 0238 — Woodesk marketing campaigns (idempotent append)
+create table if not exists public.marketing_campaigns (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  objective text not null,
+  channel text not null check (channel in ('whatsapp','instagram','email','sms','voice')),
+  status text not null default 'draft' check (status in ('draft','review','approved','scheduled','running','paused','completed','failed','archived')),
+  audience_filter jsonb not null default '{}'::jsonb check (jsonb_typeof(audience_filter) = 'object'),
+  settings jsonb not null default '{}'::jsonb check (jsonb_typeof(settings) = 'object'),
+  starts_at timestamptz,
+  ends_at timestamptz,
+  created_by uuid references auth.users(id) on delete set null,
+  approved_by uuid references auth.users(id) on delete set null,
+  approved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint marketing_campaigns_name_not_blank check (length(btrim(name)) > 0),
+  constraint marketing_campaigns_objective_not_blank check (length(btrim(objective)) > 0),
+  constraint marketing_campaigns_approval_consistent check ((status not in ('approved','scheduled','running','completed') or (approved_by is not null and approved_at is not null))),
+  constraint marketing_campaigns_period_valid check (ends_at is null or starts_at is null or ends_at >= starts_at)
+);
+alter table public.marketing_campaigns enable row level security;
+drop policy if exists tenant_isolation_marketing_campaigns_all on public.marketing_campaigns;
+create policy tenant_isolation_marketing_campaigns_all on public.marketing_campaigns for all using (organization_id = public.current_user_organization_id()) with check (organization_id = public.current_user_organization_id());
+create index if not exists idx_marketing_campaigns_org_status on public.marketing_campaigns (organization_id, status, updated_at desc);
+create index if not exists idx_marketing_campaigns_schedule on public.marketing_campaigns (organization_id, starts_at, ends_at) where status in ('approved','scheduled','running');
+revoke all on public.marketing_campaigns from anon;
+
+-- 0239 — Woodesk plan entitlements (idempotent append)
+create table if not exists public.plan_entitlements (
+  plan_id uuid not null references public.plans(id) on delete cascade,
+  capability text not null,
+  enabled boolean not null default true,
+  monthly_limit integer,
+  config jsonb not null default '{}'::jsonb check (jsonb_typeof(config) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (plan_id, capability),
+  constraint plan_entitlements_capability_not_blank check (length(btrim(capability)) > 0),
+  constraint plan_entitlements_limit_valid check (monthly_limit is null or monthly_limit >= 0)
+);
+alter table public.plan_entitlements enable row level security;
+drop policy if exists users_read_plan_entitlements on public.plan_entitlements;
+create policy users_read_plan_entitlements on public.plan_entitlements for select using (true);
+drop policy if exists platform_admin_write_plan_entitlements on public.plan_entitlements;
+create policy platform_admin_write_plan_entitlements on public.plan_entitlements for all using (public.fn_is_platform_admin()) with check (public.fn_is_platform_admin());
+create index if not exists idx_plan_entitlements_capability on public.plan_entitlements (capability, enabled);
+revoke all on public.plan_entitlements from anon;
+
+-- 0240 — queue constraints consolidated in the final block.
+
+-- 0241 — Woodesk content approval timestamp (idempotent append)
+alter table public.marketing_contents add column if not exists approved_at timestamptz;
+create index if not exists idx_marketing_contents_approval on public.marketing_contents (organization_id, status, approved_at desc);
+
+-- 0242 — Woodesk durable agent tasks
+create table if not exists public.agent_tasks (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  requested_by uuid references auth.users(id) on delete set null,
+  role text not null,
+  capability text not null,
+  input jsonb not null default '{}'::jsonb check (jsonb_typeof(input) = 'object'),
+  status text not null default 'queued' check (status in ('queued','running','completed','failed','cancelled')),
+  requires_human_approval boolean not null default true,
+  error_code text,
+  result jsonb,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.agent_tasks enable row level security;
+drop policy if exists tenant_isolation_agent_tasks_all on public.agent_tasks;
+create policy tenant_isolation_agent_tasks_all on public.agent_tasks for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+create index if not exists idx_agent_tasks_org_status on public.agent_tasks (organization_id, status, created_at desc);
+create index if not exists idx_agent_tasks_org_capability on public.agent_tasks (organization_id, capability, created_at desc);
+revoke all on public.agent_tasks from anon;
+
+-- 0243 — Woodesk commercial proposals
+create table if not exists public.commercial_proposals (
+  id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade,
+  lead_id uuid references public.crm_leads(id) on delete set null, contact_id uuid references public.contacts(id) on delete set null,
+  status text not null default 'draft' check (status in ('draft','sent','accepted','rejected','expired','cancelled')),
+  currency text not null default 'BRL' check (currency ~ '^[A-Z]{3}$'), subtotal_cents integer not null default 0 check (subtotal_cents >= 0), discount_cents integer not null default 0 check (discount_cents >= 0), total_cents integer not null default 0 check (total_cents >= 0), valid_until date, title text not null, terms text, created_by uuid references auth.users(id) on delete set null, accepted_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), constraint commercial_proposals_total_consistent check (total_cents = subtotal_cents - discount_cents and total_cents >= 0)
+);
+create table if not exists public.commercial_proposal_items (
+  id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade, proposal_id uuid not null references public.commercial_proposals(id) on delete cascade, description text not null, quantity numeric(12,3) not null check (quantity > 0), unit_price_cents integer not null check (unit_price_cents >= 0), total_cents integer not null check (total_cents >= 0), created_at timestamptz not null default now(), constraint commercial_proposal_items_total_consistent check (total_cents = round(quantity * unit_price_cents))
+);
+alter table public.commercial_proposals enable row level security; alter table public.commercial_proposal_items enable row level security;
+drop policy if exists tenant_isolation_commercial_proposals_all on public.commercial_proposals; drop policy if exists tenant_isolation_commercial_proposal_items_all on public.commercial_proposal_items;
+create policy tenant_isolation_commercial_proposals_all on public.commercial_proposals for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+create policy tenant_isolation_commercial_proposal_items_all on public.commercial_proposal_items for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+create index if not exists idx_commercial_proposals_org_status on public.commercial_proposals (organization_id, status, updated_at desc); create index if not exists idx_commercial_proposals_contact on public.commercial_proposals (organization_id, contact_id, created_at desc); create index if not exists idx_commercial_proposal_items_proposal on public.commercial_proposal_items (organization_id, proposal_id); revoke all on public.commercial_proposals, public.commercial_proposal_items from anon;
+
+-- 0244 — Woodesk proposal signing
+alter table public.commercial_proposals
+  add column if not exists public_token_hash text,
+  add column if not exists public_token_expires_at timestamptz,
+  add column if not exists signed_at timestamptz,
+  add column if not exists signed_name text;
+create unique index if not exists idx_commercial_proposals_public_token
+  on public.commercial_proposals (public_token_hash)
+  where public_token_hash is not null;
+
+-- 0245 — queue constraints consolidated in the final block.
+
+-- 0246 — queue constraints consolidated in the final block.
+
+-- 0247: medição central e idempotente de uso do Growth OS.
+create table if not exists public.woodesk_usage_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  capability text not null,
+  period_start date not null,
+  quantity integer not null default 1 check (quantity > 0),
+  idempotency_key text not null,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  occurred_at timestamptz not null default now(),
+  unique (organization_id, capability, period_start, idempotency_key)
+);
+alter table public.woodesk_usage_events enable row level security;
+drop policy if exists tenant_isolation_woodesk_usage_events_all on public.woodesk_usage_events;
+create policy tenant_isolation_woodesk_usage_events_all on public.woodesk_usage_events for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+create index if not exists idx_woodesk_usage_events_period on public.woodesk_usage_events (organization_id, capability, period_start, occurred_at desc);
+revoke all on public.woodesk_usage_events from anon;
+
+-- 0248: alvo explícito do Local SEO.
+alter table public.local_keywords add column if not exists target_business_name text;
+alter table public.local_keywords drop constraint if exists local_keywords_target_business_name_check;
+alter table public.local_keywords add constraint local_keywords_target_business_name_check check (target_business_name is null or length(btrim(target_business_name)) between 2 and 200);
+create index if not exists idx_local_keywords_target on public.local_keywords (organization_id, target_business_name) where target_business_name is not null;
+
+-- 0249: metas operacionais do Growth OS.
+create table if not exists public.woodesk_goals (id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade, metric text not null check (metric in ('leads_found','appointments','opportunities','sales_cents','contents_generated','voice_calls')), target numeric(14,2) not null check (target > 0), period_start date not null, period_end date not null, label text not null check (length(btrim(label)) between 1 and 200), created_by uuid references auth.users(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), check (period_end >= period_start));
+alter table public.woodesk_goals enable row level security;
+drop policy if exists tenant_isolation_woodesk_goals_all on public.woodesk_goals;
+create policy tenant_isolation_woodesk_goals_all on public.woodesk_goals for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+create index if not exists idx_woodesk_goals_period on public.woodesk_goals (organization_id, period_start, period_end);
+revoke all on public.woodesk_goals from anon;
+
+-- 0250: notificações transacionais persistidas.
+create table if not exists public.woodesk_notifications (id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade, user_id uuid references auth.users(id) on delete cascade, kind text not null check (kind in ('proposal_sent','proposal_accepted','proposal_rejected','goal_reached','job_failed','system')), title text not null check (length(btrim(title)) between 1 and 200), body text not null check (length(btrim(body)) between 1 and 2000), metadata jsonb not null default '{}'::jsonb, read_at timestamptz, created_at timestamptz not null default now());
+alter table public.woodesk_notifications enable row level security;
+drop policy if exists tenant_isolation_woodesk_notifications_all on public.woodesk_notifications;
+create policy tenant_isolation_woodesk_notifications_all on public.woodesk_notifications for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+create index if not exists idx_woodesk_notifications_user on public.woodesk_notifications (organization_id, user_id, read_at, created_at desc);
+revoke all on public.woodesk_notifications from anon;
+
+-- 0251: idempotência das notificações transacionais.
+alter table public.woodesk_notifications add column if not exists idempotency_key text;
+create unique index if not exists idx_woodesk_notifications_idempotency on public.woodesk_notifications (organization_id, idempotency_key) where idempotency_key is not null;
+
+-- 0252: recibos de leitura por usuário.
+create table if not exists public.woodesk_notification_reads (organization_id uuid not null references public.organizations(id) on delete cascade, notification_id uuid not null references public.woodesk_notifications(id) on delete cascade, user_id uuid not null references auth.users(id) on delete cascade, read_at timestamptz not null default now(), primary key (notification_id, user_id));
+alter table public.woodesk_notification_reads enable row level security;
+drop policy if exists tenant_isolation_woodesk_notification_reads_all on public.woodesk_notification_reads;
+create policy tenant_isolation_woodesk_notification_reads_all on public.woodesk_notification_reads for all using (organization_id in (select public.fn_user_org_ids())) with check (organization_id in (select public.fn_user_org_ids()));
+revoke all on public.woodesk_notification_reads from anon;
+
+-- 0253: contas Instagram por organização, com token cifrado em repouso.
+create table if not exists public.instagram_accounts (id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade, instagram_business_account_id text not null, page_id text, username text, access_token_encrypted bytea not null, token_expires_at timestamptz, status text not null default 'connected' check (status in ('connected','expired','revoked','error')), metadata jsonb not null default '{}'::jsonb, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique (organization_id, instagram_business_account_id));
+create index if not exists instagram_accounts_org_idx on public.instagram_accounts (organization_id, updated_at desc);
+alter table public.instagram_accounts enable row level security;
+drop policy if exists tenant_isolation_instagram_accounts_select on public.instagram_accounts;
+create policy tenant_isolation_instagram_accounts_select on public.instagram_accounts for select to authenticated using (public.fn_user_org_ids() @> array[organization_id]);
+drop policy if exists tenant_isolation_instagram_accounts_write on public.instagram_accounts;
+create policy tenant_isolation_instagram_accounts_write on public.instagram_accounts for all to authenticated using (public.fn_role_at_least(organization_id, 'admin')) with check (public.fn_role_at_least(organization_id, 'admin'));
+revoke all on public.instagram_accounts from anon;
+revoke select (access_token_encrypted) on public.instagram_accounts from authenticated;
+
+-- 0254: ponte de sessão do Instagram Graph para o inbox canônico.
+alter table public.channel_sessions add column if not exists instagram_account_id uuid;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname='channel_sessions_instagram_account_fk' and conrelid='public.channel_sessions'::regclass) then
+    alter table public.channel_sessions add constraint channel_sessions_instagram_account_fk foreign key (instagram_account_id) references public.instagram_accounts(id) on delete set null;
+  end if;
+end $$;
+alter table public.channel_sessions drop constraint if exists channel_sessions_provider_check;
+-- Provider constraint is rebuilt in the final consolidated block below.
+alter table public.channel_sessions drop constraint if exists channel_sessions_provider_ref_check;
+-- Provider reference constraint is rebuilt in the final consolidated block below.
+create unique index if not exists channel_sessions_instagram_account_active_unique on public.channel_sessions (organization_id, instagram_account_id) where provider='instagram_graph' and archived_at is null and instagram_account_id is not null;
+comment on column public.channel_sessions.instagram_account_id is 'Conta Instagram Graph conectada; referência própria, sem reutilizar identificadores WhatsApp.';
+
+-- 0255: identidade externa Instagram separada da identidade WhatsApp.
+alter table public.contacts add column if not exists instagram_identity text;
+alter table public.contacts drop constraint if exists contacts_instagram_identity_check;
+alter table public.contacts add constraint contacts_instagram_identity_check check (instagram_identity is null or instagram_identity ~ '^ig:[A-Za-z0-9_.:-]{1,240}$');
+create unique index if not exists uniq_contacts_org_instagram_identity on public.contacts (organization_id, instagram_identity) where instagram_identity is not null and is_merged_into is null and is_anonymized = false;
+comment on column public.contacts.instagram_identity is 'Identidade externa do usuário Instagram no formato ig:<id>; não substitui wa_identity e não representa consentimento.';
+
+-- 0256: engine explícito para sessões Instagram Graph.
+alter table public.channel_sessions drop constraint if exists channel_sessions_engine_check;
+alter table public.channel_sessions add constraint channel_sessions_engine_check check (engine = any (array['NOWEB'::text, 'WEBJS'::text, 'INSTAGRAM_GRAPH'::text]));
+
+-- 0257: resposta Instagram fora do request principal.
+alter table public.job_queue drop constraint if exists job_queue_kind_check;
+alter table public.job_queue add constraint job_queue_kind_check check (kind in ('inbound_turn','followup_turn','watchdog','flywheel','case_reply_turn','operator_turn','transactional_delivery','approved_reply','lead_finder_search','local_seo_grid','voice_call','lead_enrichment','agent_task','campaign_execution','google_business_sync','content_publish','instagram_reply'));
+alter table public.job_queue drop constraint if exists job_queue_turn_needs_contact;
+alter table public.job_queue add constraint job_queue_turn_needs_contact check ((kind in ('inbound_turn','followup_turn','case_reply_turn','operator_turn','transactional_delivery','approved_reply')) = (contact_id is not null));
+
+alter table public.channel_sessions add constraint channel_sessions_provider_check check (provider = any (array['waha'::text, 'meta_cloud'::text, 'zernio'::text, 'instagram_graph'::text]));
+alter table public.channel_sessions add constraint channel_sessions_provider_ref_check check ((provider='waha' and waha_session_name is not null) or (provider='meta_cloud' and meta_phone_number_id is not null) or (provider='zernio' and zernio_account_id is not null) or (provider='instagram_graph' and instagram_account_id is not null));
+
+-- 0258: preserva a conversa canônica na telemetria de IA.
+alter table public.llm_calls add column if not exists conversation_id uuid references public.conversations(id) on delete set null;
+create index if not exists llm_calls_conversation_idx on public.llm_calls (organization_id, conversation_id, created_at desc) where conversation_id is not null;
+comment on column public.llm_calls.conversation_id is 'Conversa canônica associada à chamada de IA quando o produtor conhece o contexto; registros históricos podem ser nulos.';
+
+-- ---- VARREDURA anon: final do apêndice Woodesk ----
+-- Deve permanecer como o último bloco executável: funções criadas acima também
+-- precisam nascer sem EXECUTE efetivo para anon.
+do $$
+declare
+  f record;
+  tinha_auth boolean;
+  tinha_service boolean;
+begin
+  if to_regrole('anon') is null then return; end if;
+  for f in
+    select p.oid, p.oid::regprocedure as assinatura
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prosecdef
+  loop
+    tinha_auth := to_regrole('authenticated') is not null
+      and has_function_privilege('authenticated', f.oid, 'EXECUTE');
+    tinha_service := to_regrole('service_role') is not null
+      and has_function_privilege('service_role', f.oid, 'EXECUTE');
+    execute format('revoke execute on function %s from public, anon', f.assinatura);
+    if tinha_auth then execute format('grant execute on function %s to authenticated', f.assinatura); end if;
+    if tinha_service then execute format('grant execute on function %s to service_role', f.assinatura); end if;
+  end loop;
+end $$;

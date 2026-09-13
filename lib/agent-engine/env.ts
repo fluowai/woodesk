@@ -76,6 +76,16 @@ const envSchema = z.object({
   // Opcionais no boot: sem WAHA_API_BASE_URL/KEY o watchdog fica OFF (warn).
   WAHA_API_BASE_URL: z.string().url().optional(),
   WAHA_API_KEY: z.string().min(1).optional(),
+  // Provider de Voice AI usado pelo job voice_call. Sem estas três variáveis
+  // o worker sobe, mas a capability permanece explicitamente indisponível.
+  VOICE_PROVIDER: z.enum(['pipecat', 'voicebox']).optional(),
+  VOICE_PROVIDER_BASE_URL: z.string().url().optional(),
+  VOICE_PROVIDER_TOKEN: z.string().min(1).optional(),
+  // Gateway server-side para entrega de campanhas aprovadas. O contrato HTTP
+  // está documentado em docs/woodesk/MARKETING.md.
+  CAMPAIGN_PROVIDER_ID: z.string().min(1).optional(),
+  CAMPAIGN_PROVIDER_BASE_URL: z.string().url().optional(),
+  CAMPAIGN_PROVIDER_TOKEN: z.string().min(1).optional(),
   WATCHDOG_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   WATCHDOG_REDRIVE_MIN_AGE_MS: z.coerce.number().int().positive().default(30_000),
   WATCHDOG_REDRIVE_BATCH_SIZE: z.coerce.number().int().positive().default(10),

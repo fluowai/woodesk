@@ -1,7 +1,8 @@
 # Stack local de dependências externas para o DeskcommCRM.
 #
-# Sobe apenas o WAHA (Plus / NOWEB) pra desenvolvimento. Postgres + Auth + Storage
-# vêm do Supabase Cloud (ou supabase local CLI separadamente, conforme o time preferir).
+# Sobe WAHA (Plus / NOWEB), Redis e o gateway REST compatível com Upstash para
+# desenvolvimento. Postgres + Auth + Storage vêm do Supabase Cloud (ou Supabase
+# local CLI separadamente, conforme o time preferir).
 #
 # Uso:
 #   1. Copie .env.example -> .env.local e preencha WAHA_API_KEY (plaintext)
@@ -26,7 +27,7 @@ services:
       - "3030:3000"
     environment:
       # Hash SHA512 hex da api key (NÃO plaintext). Cliente envia plaintext em X-Api-Key.
-      WAHA_API_KEY: ${WAHA_API_KEY_SHA512}
+      WAHA_API_KEY: ${WAHA_API_KEY_SHA512:-2f307a49d3b97a309ca7425595a9cc2dc6a2061580fe2ccd5cca45cc90d2f600a6b40ae713e01a494ee655c1f89ffdb6843c13da71cdbfd2ac9c9d64b87b1a22}
       # Webhook base URL — precisa ser pública (use ngrok/cloudflared em dev).
       # host.docker.internal: o app Next roda no HOST em dev — localhost dentro do
       # container seria o próprio WAHA e o webhook nunca chegaria. Porta 3002:
@@ -58,6 +59,33 @@ services:
       retries: 3
       start_period: 30s
 
+  redis:
+    image: redis:7-alpine
+    container_name: deskcomm-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  srh:
+    # Mantém o contrato HTTP de @upstash/redis sem exigir um Redis gerenciado
+    # durante o desenvolvimento local.
+    image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+    container_name: deskcomm-redis-http
+    restart: unless-stopped
+    ports:
+      - "3998:80"
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${SRH_TOKEN:-local-dev-token}
+      SRH_CONNECTION_STRING: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # Worker 24/7 do agent-engine (fusão Vendaval): fila, cron/follow-up, drain do
   # event_log e turnos do agente rico. Postgres = Supabase (SUPABASE_DB_URL no
   # .env.local). Sobe junto do WAHA: `docker compose up -d`.
@@ -70,10 +98,17 @@ services:
     env_file:
       - .env
       - .env.local
+    depends_on:
+      waha:
+        condition: service_started
+      srh:
+        condition: service_started
     environment:
       # dentro do container, localhost é o próprio worker — o WAHA está na rede
       # do compose (serviço waha, porta interna 3000). Sobrepõe o .env.local.
       WAHA_API_BASE_URL: http://waha:3000
+      UPSTASH_REDIS_REST_URL: http://srh:80
+      UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN:-local-dev-token}
     ports:
       - "8787:8787"
     healthcheck:

@@ -461,6 +461,10 @@ export const AUDIT_ACTIONS = [
   "crm_task.updated",
   "crm_task.deleted",
   "organization.switched",
+  "woodesk.instagram_connected",
+  "woodesk.instagram_disconnected",
+  "platform_admin.woodesk_flag_updated",
+  "platform_admin.woodesk_flags_listed",
 ] as const;
 
 /** Um código de auditoria. Derivado de `AUDIT_ACTIONS` — não redigite a lista. */
