@@ -1,7 +1,7 @@
 -- Migration: 20260911000000_add_saas_plans.sql
 -- Description: Adiciona tabelas de Planos e Limites para o modelo SaaS (Revendas limitando clientes)
 
-CREATE TABLE public.plans (
+CREATE TABLE IF NOT EXISTS public.plans (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     name text NOT NULL,
     max_users integer NOT NULL DEFAULT 1,
@@ -21,8 +21,8 @@ CREATE POLICY "users_read_plans" ON public.plans
     USING (true);
 
 -- Associa uma organização a um plano
-ALTER TABLE public.organizations 
-ADD COLUMN plan_id uuid REFERENCES public.plans(id);
+ALTER TABLE public.organizations
+ADD COLUMN IF NOT EXISTS plan_id uuid REFERENCES public.plans(id);
 
 -- Cria view ou helper para verificar limite de usuários (exemplo)
 CREATE OR REPLACE FUNCTION public.fn_check_plan_limits()
@@ -54,6 +54,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS tr_check_plan_limits ON public.user_organizations;
 CREATE TRIGGER tr_check_plan_limits
     BEFORE INSERT ON public.user_organizations
     FOR EACH ROW

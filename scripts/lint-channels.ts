@@ -38,6 +38,14 @@ import { nomeiaProvider } from "./lint-channels.pattern";
 const ROOTS = ["app", "lib", "components", "workers"];
 const ALLOWED = [
   /^lib\/channels\//,
+  // A API de publicação social do produto é uma fronteira de integração
+  // própria. Ela não entrega mensagens a um contato e, portanto, não está
+  // sujeita às invariantes de transporte descritas em restricao-de-canal.md.
+  // O host da API vive apenas nesta fronteira e não deve ser tratado como um
+  // provider de canal pelo lint.
+  /^app\/api\/v1\/woodesk\/instagram\//,
+  /^lib\/woodesk\/(instagram|providers)\//,
+  /^lib\/woodesk\/provider-health\.test\.ts$/,
   // SEGUNDA FRONTEIRA, não exceção de feature — e a diferença é o que mantém a
   // catraca honesta. `lib/channels/` é onde vive quem ENTREGA MENSAGEM, com as
   // capabilities que descrevem o que a plataforma deixa dizer (janela, template,

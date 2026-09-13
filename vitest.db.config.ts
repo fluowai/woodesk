@@ -32,6 +32,12 @@ export default defineConfig({
     // inteira. audit()/emit_event reais nunca são alcançados (fetch falha
     // rápido contra porta fechada, engolido pelo try/catch de audit()).
     env: {
+      // O Vitest pode reconstruir o ambiente dos workers a partir deste mapa.
+      // Repassar os dados do harness aqui evita que o setupFile perca as
+      // variáveis quando a suíte é iniciada pelo node.exe no Windows/WSL.
+      TEST_DB_CONTAINER: process.env.TEST_DB_CONTAINER ?? "",
+      TEST_DB_TEMPLATE: process.env.TEST_DB_TEMPLATE ?? "",
+      TEST_DB_PORT: process.env.TEST_DB_PORT ?? "",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
       SUPABASE_SERVICE_ROLE_KEY:

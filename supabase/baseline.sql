@@ -23320,7 +23320,7 @@ grant execute on function public.fn_update_budget_consumption() to service_role;
 -- Migration: 20260911000000_add_saas_plans.sql
 -- Description: Adiciona tabelas de Planos e Limites para o modelo SaaS (Revendas limitando clientes)
 
-CREATE TABLE public.plans (
+CREATE TABLE IF NOT EXISTS public.plans (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     name text NOT NULL,
     max_users integer NOT NULL DEFAULT 1,
@@ -23343,7 +23343,7 @@ CREATE POLICY "users_read_plans" ON public.plans
 
 -- Associa uma organização a um plano
 ALTER TABLE public.organizations 
-ADD COLUMN plan_id uuid REFERENCES public.plans(id);
+ADD COLUMN IF NOT EXISTS plan_id uuid REFERENCES public.plans(id);
 
 -- Cria view ou helper para verificar limite de usuários (exemplo)
 CREATE OR REPLACE FUNCTION public.fn_check_plan_limits()
@@ -23373,6 +23373,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS tr_check_plan_limits ON public.user_organizations;
 CREATE TRIGGER tr_check_plan_limits
     BEFORE INSERT ON public.user_organizations
     FOR EACH ROW
@@ -23382,7 +23383,7 @@ CREATE TRIGGER tr_check_plan_limits
 -- Migration: 20260911000001_add_waha_instances.sql
 -- Description: Adiciona cluster de WAHA (instâncias) para balanceamento de carga
 
-CREATE TABLE public.waha_instances (
+CREATE TABLE IF NOT EXISTS public.waha_instances (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
     organization_id uuid REFERENCES public.organizations(id), -- NULL se for pool público da revenda
     name text NOT NULL,
@@ -23416,7 +23417,7 @@ CREATE POLICY "platform_admin_all_waha" ON public.waha_instances
 
 -- Adiciona a referência na tabela de sessões para saber em qual container WAHA ela mora
 ALTER TABLE public.channel_sessions
-ADD COLUMN waha_instance_id uuid REFERENCES public.waha_instances(id);
+ADD COLUMN IF NOT EXISTS waha_instance_id uuid REFERENCES public.waha_instances(id);
 
 -- Appended by migration 20260912100000_0233_woodesk_lead_finder.sql
 -- Lead Finder Woodesk: feature flags, searches, normalized results and enrichment.
@@ -23594,7 +23595,7 @@ create table if not exists public.marketing_campaigns (
 );
 alter table public.marketing_campaigns enable row level security;
 drop policy if exists tenant_isolation_marketing_campaigns_all on public.marketing_campaigns;
-create policy tenant_isolation_marketing_campaigns_all on public.marketing_campaigns for all using (organization_id = public.current_user_organization_id()) with check (organization_id = public.current_user_organization_id());
+create policy tenant_isolation_marketing_campaigns_all on public.marketing_campaigns for all using (organization_id in (select org_ids.fn_user_org_ids from public.fn_user_org_ids() as org_ids(fn_user_org_ids))) with check (organization_id in (select org_ids.fn_user_org_ids from public.fn_user_org_ids() as org_ids(fn_user_org_ids)));
 create index if not exists idx_marketing_campaigns_org_status on public.marketing_campaigns (organization_id, status, updated_at desc);
 create index if not exists idx_marketing_campaigns_schedule on public.marketing_campaigns (organization_id, starts_at, ends_at) where status in ('approved','scheduled','running');
 revoke all on public.marketing_campaigns from anon;
@@ -23736,7 +23737,7 @@ create table if not exists public.instagram_accounts (id uuid primary key defaul
 create index if not exists instagram_accounts_org_idx on public.instagram_accounts (organization_id, updated_at desc);
 alter table public.instagram_accounts enable row level security;
 drop policy if exists tenant_isolation_instagram_accounts_select on public.instagram_accounts;
-create policy tenant_isolation_instagram_accounts_select on public.instagram_accounts for select to authenticated using (public.fn_user_org_ids() @> array[organization_id]);
+create policy tenant_isolation_instagram_accounts_select on public.instagram_accounts for select to authenticated using (organization_id in (select public.fn_user_org_ids()));
 drop policy if exists tenant_isolation_instagram_accounts_write on public.instagram_accounts;
 create policy tenant_isolation_instagram_accounts_write on public.instagram_accounts for all to authenticated using (public.fn_role_at_least(organization_id, 'admin')) with check (public.fn_role_at_least(organization_id, 'admin'));
 revoke all on public.instagram_accounts from anon;

@@ -10,6 +10,32 @@
 # O container é SEMPRE derrubado no EXIT (sucesso ou falha).
 set -euo pipefail
 
+# No Windows, o Docker Desktop pode estar disponível no PowerShell como
+# `docker.exe`, mas não exposto dentro da distribuição WSL que executa este
+# Bash. No CI Linux, `docker` continua sendo o binário normal. Resolver aqui
+# mantém o teste útil nos dois ambientes e deixa uma mensagem clara quando
+# nenhum dos dois está disponível.
+if command -v docker.exe >/dev/null 2>&1; then
+  DOCKER_BIN="docker.exe"
+elif command -v docker >/dev/null 2>&1; then
+  DOCKER_BIN="docker"
+else
+  echo "FATAL: Docker CLI não encontrada. No Windows, habilite a integração WSL no Docker Desktop." >&2
+  exit 1
+fi
+
+if command -v node >/dev/null 2>&1; then
+  VITEST_CMD=(vitest)
+  VITEST_CMD_KIND="linux"
+elif command -v node.exe >/dev/null 2>&1; then
+  VITEST_ENTRYPOINT="$(wslpath -w "$PWD/node_modules/vitest/vitest.mjs")"
+  VITEST_CMD=(node.exe "$VITEST_ENTRYPOINT")
+  VITEST_CMD_KIND="windows"
+else
+  echo "FATAL: Node.js não encontrado no ambiente que executa este Bash." >&2
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINE="$ROOT/supabase/baseline.sql"
 # A PORTA: quem PEDE escolhe; quem não pede deixa o Docker escolher.
@@ -102,20 +128,20 @@ cleanup() {
   #
   # O sintoma não aponta para cá: o disco enche horas depois, e quem paga é a
   # próxima sessão a rodar qualquer coisa.
-  docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
+  "$DOCKER_BIN" rm -fv "$CONTAINER" >/dev/null 2>&1 || true
   rm -f "$CARIMBO"
 }
 trap cleanup EXIT
 
 echo "==> subindo $IMAGE como $CONTAINER (worktree $DONO_WORKTREE, branch $DONO_BRANCH)"
-docker run -d --rm --name "$CONTAINER" \
+"$DOCKER_BIN" run -d --rm --name "$CONTAINER" \
   -p "$PUBLICACAO" \
   --label "deskcomm.harness=test-db" \
   --label "deskcomm.worktree=$DONO_WORKTREE" \
   --label "deskcomm.branch=$DONO_BRANCH" \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=postgres \
-  "$IMAGE" >/dev/null
+  "$IMAGE"
 
 # A porta EFETIVA só se sabe depois de o daemon alocar.
 #
@@ -124,7 +150,7 @@ docker run -d --rm --name "$CONTAINER" \
 # por acidente — a env do shell de quem chamou é herdada. Com a porta escolhida
 # aqui dentro, sem o export os 49 iriam bater na 54329, que é de outra pessoa ou
 # de ninguém.
-PORT="$(docker port "$CONTAINER" 5432/tcp | head -1 | sed 's/.*://')"
+PORT="$("$DOCKER_BIN" port "$CONTAINER" 5432/tcp | head -1 | sed 's/.*://')"
 [ -n "$PORT" ] || { echo "FATAL: não consegui ler a porta publicada do container" >&2; exit 1; }
 export TEST_DB_PORT="$PORT"
 echo "    ✓ publicado em 127.0.0.1:$PORT"
@@ -133,17 +159,17 @@ echo "    ✓ publicado em 127.0.0.1:$PORT"
 # testar via TCP 127.0.0.1 evita o falso-ready da fase de init).
 ready=0
 for _ in $(seq 1 60); do
-  if docker exec "$CONTAINER" psql -h 127.0.0.1 -U postgres -d postgres -c "select 1" >/dev/null 2>&1; then
+  if "$DOCKER_BIN" exec "$CONTAINER" psql -h 127.0.0.1 -U postgres -d postgres -c "select 1" >/dev/null 2>&1; then
     ready=1; break
   fi
   sleep 1
 done
 [ "$ready" = 1 ] || { echo "FATAL: postgres não ficou pronto em 60s" >&2; exit 1; }
 
-docker exec "$CONTAINER" psql -U postgres -d postgres -q -c "create database $TEMPLATE" >/dev/null
+"$DOCKER_BIN" exec "$CONTAINER" psql -U postgres -d postgres -q -c "create database $TEMPLATE" >/dev/null
 
 psql_install() {
-  docker exec -i "$CONTAINER" psql -U postgres -d "$TEMPLATE" -v ON_ERROR_STOP=1 -q -f - "$@"
+  "$DOCKER_BIN" exec -i "$CONTAINER" psql -U postgres -d "$TEMPLATE" -v ON_ERROR_STOP=1 -q -f - "$@"
 }
 
 echo "==> prelude: stubs mínimos do Supabase (roles, auth.uid(), extensions)"
@@ -310,7 +336,7 @@ echo "==> conferindo que o banco efêmero é o do PRODUTO (antes do baseline)"
 # `-q` é obrigatório: sem ele o stdout leva "CREATE FUNCTION"/"DROP FUNCTION"
 # junto do resultado e a comparação com "t" falha sempre — sonda que reprova o
 # banco certo é tão inútil quanto sonda que aprova o errado.
-fidelidade="$(docker exec -i "$CONTAINER" psql -U postgres -d "$TEMPLATE" -v ON_ERROR_STOP=1 -q -tA -f - <<'SQL'
+fidelidade="$("$DOCKER_BIN" exec -i "$CONTAINER" psql -U postgres -d "$TEMPLATE" -v ON_ERROR_STOP=1 -q -tA -f - <<'SQL'
 create function public.fn_sonda_fidelidade_do_harness() returns int
   language sql security definer as $fn$ select 1 $fn$;
 select exists (
@@ -360,7 +386,7 @@ echo "==> banco \`postgres\` a partir do molde (o setupFile o recria a cada arqu
 #    "database postgres does not exist" em 99 arquivos. Aí o invariante
 #    tests/invariants/harness-isola-por-arquivo.test.ts aponta a regressão certa,
 #    com duas asserções, em vez de o run virar um muro de ruído.
-docker exec -i "$CONTAINER" psql -U postgres -d template1 -q -v ON_ERROR_STOP=1 -f - <<SQL
+"$DOCKER_BIN" exec -i "$CONTAINER" psql -U postgres -d template1 -q -v ON_ERROR_STOP=1 -f - <<SQL
 drop database if exists postgres with (force);
 create database postgres template $TEMPLATE;
 SQL
@@ -369,8 +395,22 @@ echo "==> invariantes: vitest (tests/invariants) — banco novo por ARQUIVO, ord
 # `--sequence.shuffle.files`: com o isolamento por arquivo a ordem deixa de ser
 # variável escondida, e sortear é o que impede a próxima colisão de fixture de
 # ficar dormente até alguém renomear um arquivo.
-TEST_DB_CONTAINER="$CONTAINER" TEST_DB_TEMPLATE="$TEMPLATE" TEST_DB_PORT="$PORT" \
-  vitest run --config vitest.db.config.ts --sequence.shuffle.files=true "$@"
+export TEST_DB_CONTAINER="$CONTAINER"
+export TEST_DB_TEMPLATE="$TEMPLATE"
+export TEST_DB_PORT="$PORT"
+if [ "$VITEST_CMD_KIND" = "windows" ]; then
+  # Variáveis exportadas pelo Bash/WSL não são propagadas de forma confiável
+  # para processos Windows neste ambiente. Defini-las no cmd.exe garante que
+  # o setupFile do Vitest receba o container e o molde.
+  VITEST_WIN_CONFIG="$(wslpath -w "$ROOT/vitest.db.config.ts")"
+  VITEST_WIN_ARGS="\"$VITEST_ENTRYPOINT\" run --config \"$VITEST_WIN_CONFIG\" --sequence.shuffle.files=true"
+  if [ "$#" -gt 0 ]; then
+    VITEST_WIN_ARGS="$VITEST_WIN_ARGS $*"
+  fi
+  cmd.exe /d /s /c "set TEST_DB_CONTAINER=$CONTAINER&&set TEST_DB_TEMPLATE=$TEMPLATE&&set TEST_DB_PORT=$PORT&&node.exe $VITEST_WIN_ARGS"
+else
+  "${VITEST_CMD[@]}" run --config vitest.db.config.ts --sequence.shuffle.files=true "$@"
+fi
 
 # A RECUSA. Vem depois do vitest e ANTES da palavra "verde", porque o que se
 # recusa aqui é o próprio resultado — inclusive um resultado que passou.

@@ -56,7 +56,7 @@ if (!container || !template) {
 }
 
 execFileSync(
-  "docker",
+  process.platform === "win32" ? "docker.exe" : "docker",
   ["exec", "-i", container, "psql", "-U", "postgres", "-d", "template1", "-qtA", "-v", "ON_ERROR_STOP=1", "-f", "-"],
   {
     input: `drop database if exists postgres with (force);\ncreate database postgres template ${template};\n`,

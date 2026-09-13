@@ -28,8 +28,8 @@ create table if not exists public.marketing_campaigns (
 alter table public.marketing_campaigns enable row level security;
 drop policy if exists tenant_isolation_marketing_campaigns_all on public.marketing_campaigns;
 create policy tenant_isolation_marketing_campaigns_all on public.marketing_campaigns
-  for all using (organization_id = public.current_user_organization_id())
-  with check (organization_id = public.current_user_organization_id());
+  for all using (organization_id in (select org_ids.fn_user_org_ids from public.fn_user_org_ids() as org_ids(fn_user_org_ids)))
+  with check (organization_id in (select org_ids.fn_user_org_ids from public.fn_user_org_ids() as org_ids(fn_user_org_ids)));
 
 create index if not exists idx_marketing_campaigns_org_status
   on public.marketing_campaigns (organization_id, status, updated_at desc);
